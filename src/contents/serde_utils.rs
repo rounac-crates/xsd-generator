@@ -64,7 +64,7 @@ pub fn add_utils(cr8: &mut Crate) {
 	// Insert everything
 	m.fns.push(NAIVETIME_MODS.to_owned());
 	m.fns.push(TIMEDELTA_MOD.to_owned());
-	m.fns.push(CHOICE_CONVERT_MACRO.to_owned());
+	m.fns.push(ENUM_SERDE_MACRO.to_owned());
 	m.fns.push(ABSTRACT_CONVERT_MACRO.to_owned());
 }
 
@@ -275,57 +275,73 @@ pub mod time_delta_vec {
 }
 "#;
 
-const CHOICE_CONVERT_MACRO: &str = r#"
-/// Macro to impl [TryFrom] and [Into] for choice type enums to the serde
-/// helper types.
+const ENUM_SERDE_MACRO: &str = r#"
+/// Macro for ease of (de)serialize of choicetype enums, specifically as a
+/// work-around when using `quick-xml`.
 #[macro_export]
-macro_rules! choice_convert_impls {
+macro_rules! struct_like_serde {
 	{
-		$en_name:ident - $serde_name:ident
+		$en_name:ident
 		$(
 			$vnt_name:ident $(,)?
 		)+
 	} => {
-		// TryFrom
-		impl TryFrom<$serde_name> for $en_name {
-			type Error = &'static str;
-			fn try_from(value: $serde_name) -> Result<Self, Self::Error> {
+		// Impl Serialize
+		impl serde::Serialize for $en_name {
+			fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+				use serde::ser::SerializeStruct;
 				use paste::paste;
 
-				let mut count = 0;
-				let err = Err("Choice type expects one variant only.");
-
-				let mut ret = None;
-				$(
-				if let Some(v) = paste![value . $vnt_name] {
-					ret = Some(paste![$en_name :: $vnt_name (v)]);
-					count += 1;
-				}
-				)+
-
-				if count != 1 {
-					err
-				} else {
-					// Safety: If count is > 0, then ret will have been set.
-					Ok(ret.unwrap())
-				}
+				let mut st = ser.serialize_struct(stringify!($en_name), 1)?;
+				match self {
+					$(paste![Self :: $vnt_name (v)] => st.serialize_field(stringify!($vnt_name), v)),+
+				}?;
+				st.end()
 			}
 		}
 
-		// Into
-		impl Into<$serde_name> for $en_name {
-			fn into(self) -> $serde_name {
+		impl<'de> serde::Deserialize<'de> for $en_name {
+			fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+				use core::fmt;
+				use serde::de::{Error, MapAccess, Visitor};
 				use paste::paste;
-				type IntoType = $serde_name;
 
-				match self {
-					$(
-						paste! [$en_name :: $vnt_name (v)] => { IntoType {
-							$vnt_name: Some(v),
-							..IntoType::default()
-						}}
-					),+
+				const FIELDS: &[&str] = &[
+					$( stringify!($vnt_name), )+
+				];
+
+				struct EnumVisitor;
+				impl<'v> Visitor<'v> for EnumVisitor {
+					type Value = $en_name;
+
+					fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+						f.write_str("1 variant")
+					}
+
+					fn visit_map<A: MapAccess<'v>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+						let en = match map.next_key()? {
+							$(
+								Some(stringify!($vnt_name)) => paste! [$en_name :: $vnt_name (map.next_value()?)],
+							)+
+							Some(v) => return Err(A::Error::unknown_variant(v, FIELDS)),
+							_ => return Err(A::Error::missing_field("Any valid variant"))
+						};
+
+						// Empty the `map`.
+						let mut total = 1;
+						while let Some(_) = map.next_entry::<(),()>()? {
+							total += 1;
+						}
+
+						if total != 1 {
+							Err(A::Error::invalid_length(total, &"enum with 1 variant."))
+						} else {
+							Ok(en)
+						}
+					}
 				}
+
+				de.deserialize_map(EnumVisitor)
 			}
 		}
 	};

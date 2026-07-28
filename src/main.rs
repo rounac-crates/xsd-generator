@@ -66,8 +66,6 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 	let contents = cr8.contents.entry(crate_path.clone()).or_default();
 	_ = write!(contents.docs, "Module for all choice types.\n\n");
 
-	let mut serde_helper_mod = Module::default();
-	let serde_helper_path = PathBuf::from("crate/choices/serde_helpers");
 	for choice in choices {
 		let mut attrs = Vec::new();
 
@@ -154,25 +152,21 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 		let mut serde_macro_impl = String::new();
 		_ = write!(
 			serde_macro_impl,
-			"choice_convert_impls! {{\n\t{choice_name} - {choice_name}Serde\n",
+			"struct_like_serde! {{\n\t{}\n",
+			choice_name
 		);
 		_ = write!(serde_macro_impl, "\t{},\n", separated_variants);
 		_ = write!(serde_macro_impl, "}}");
 
 		let impls = vec![serde_macro_impl];
-		// Add the serde attributes for conversion.
-		let attrs = vec![
-			format!("#[serde(into = \"{choice_name}Serde\")]"),
-			format!("#[serde(try_from = \"{choice_name}Serde\")]"),
-		];
 
 		let mut c = RustType {
 			name: Rc::from(choice_name),
 			output: true,
 			docs: choice.annotation.clone(),
 			public: true,
-			attrs,
-			derive: ENUM_DERIVES.iter().map(|&v| v.to_owned()).collect(),
+			attrs: Vec::new(),
+			derive: CHOICE_DERIVES.iter().map(|&v| v.to_owned()).collect(),
 			any_features: BTreeSet::new(),
 			extends: parent,
 			members: TypeMembers::Variants(variants),
@@ -180,77 +174,9 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 		};
 		rustify_rtype(&mut c);
 
-		let mut serde_clone = c.clone();
-
 		cr8.type_map.insert(c.name.clone(), crate_path.clone());
 		contents.types.insert(c.name.clone(), c);
-
-		// Serde clone stuff
-		let fields: Vec<Field> = match serde_clone.members {
-			TypeMembers::Variants(variants) => variants
-				.into_iter()
-				.filter_map(|v| {
-					let VariantType::Newtype(v_field) = v.vtype else {
-						return None;
-					};
-
-					let plurality = match v_field.plurality {
-						FieldPlurality::Plural => FieldPlurality::OptionalPlural,
-						_ => FieldPlurality::Optional,
-					};
-
-					let mut f = Field {
-						name: v.name.to_string(),
-						typename: v_field.typename,
-						public: true,
-						boxed: false,
-						docs: String::new(),
-						plurality,
-						attrs: vec![
-							"#[serde(skip_serializing_if = \"Option::is_none\")]".to_string(),
-						],
-					};
-					add_custom_serde(&mut f);
-
-					Some(f)
-				})
-				.collect(),
-			_ => unreachable!(),
-		};
-
-		// Update values for this type.
-		let new_name = format!("{}Serde", serde_clone.name);
-		serde_clone.name = Rc::from(new_name.as_str());
-		serde_clone.public = true;
-		serde_clone.impls.clear();
-		serde_clone.members = TypeMembers::Fields(fields);
-		serde_clone.derive = NON_ENUM_DERIVES.iter().map(|&v| v.to_owned()).collect();
-		serde_clone.attrs.clear(); // Do this to avoid accidental recursion
-		serde_clone.attrs.push("#[serde(default)]".to_string());
-		serde_clone
-			.attrs
-			.push("#[allow(non_snake_case)]".to_string());
-		cr8.type_map
-			.insert(serde_clone.name.clone(), serde_helper_path.clone());
-		serde_helper_mod
-			.types
-			.insert(serde_clone.name.clone(), serde_clone);
 	}
-
-	// Finalize serde helper mod
-	serde_helper_mod
-		.docs
-		.push_str("Helper types for use with serde try_from and into.");
-	serde_helper_mod
-		.imports
-		.insert("use serde::{Deserialize, Serialize};".to_string());
-
-	contents.modules.insert("mod serde_helpers;".to_string());
-	contents
-		.imports
-		.insert("use serde::{Deserialize, Serialize};".to_string());
-	contents.imports.insert("use serde_helpers::*;".to_string());
-	cr8.contents.insert(serde_helper_path, serde_helper_mod);
 }
 
 fn add_enum_types(elems: &[Element], cr8: &mut Crate) {
