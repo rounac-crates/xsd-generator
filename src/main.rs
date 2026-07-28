@@ -19,6 +19,7 @@ use traits::{Trait, add_mirror_traits};
 use xsd_generator::{BoundType, ContentType, Element, ExtRest, parse_schema};
 
 use crate::{
+	contents::serde_utils::{add_custom_serde, has_custom_serde},
 	impls::{impl_attrs, impls_for_types},
 	traits::impl_mirror_trait_fn,
 };
@@ -198,7 +199,7 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 						_ => FieldPlurality::Optional,
 					};
 
-					Some(Field {
+					let mut f = Field {
 						name: v.name.to_string(),
 						typename: v_field.typename,
 						public: true,
@@ -208,7 +209,10 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 						attrs: vec![
 							"#[serde(skip_serializing_if = \"Option::is_none\")]".to_string(),
 						],
-					})
+					};
+					add_custom_serde(&mut f);
+
+					Some(f)
 				})
 				.collect(),
 			_ => unreachable!(),
@@ -400,7 +404,7 @@ fn add_complex_structs(elems: &[Element], cr8: &mut Crate) {
 			fix_illegal_name(&mut field_name);
 
 			// Prepare full type
-			let type_name = match field.type_name {
+			let mut type_name = match field.type_name {
 				Some(ref name) => {
 					let mut tn = match to_pascal_case(name) {
 						Some(n) => n,
@@ -428,8 +432,11 @@ fn add_complex_structs(elems: &[Element], cr8: &mut Crate) {
 				FieldPlurality::None
 			};
 
+			// Check for custom serde after mapping field name
+			map_type(&mut type_name);
+
 			// Output field
-			let f = Field {
+			let mut f = Field {
 				name: field_name,
 				public: true,
 				docs: field.annotation.clone(),
@@ -438,6 +445,7 @@ fn add_complex_structs(elems: &[Element], cr8: &mut Crate) {
 				boxed: false,
 				attrs: field_attrs,
 			};
+			add_custom_serde(&mut f);
 
 			fields.push(f);
 		}
@@ -455,7 +463,7 @@ fn add_complex_structs(elems: &[Element], cr8: &mut Crate) {
 			impls: Vec::new(),
 		};
 		impl_attrs(&mut t, &st.attrs);
-		rustify_rtype(&mut t);
+		//rustify_rtype(&mut t);
 
 		cr8.type_map.insert(t.name.clone(), crate_path.clone());
 		contents.types.insert(t.name.clone(), t);
@@ -552,7 +560,7 @@ fn add_simple_structs(elems: &[Element], cr8: &mut Crate) {
 		fix_illegal_name(&mut r_name);
 		map_type(&mut r_name); // This happens early because of [has_custom_serde].
 
-		let mut t = match contents::serde_utils::has_custom_serde(&r_name) {
+		let t = match contents::serde_utils::has_custom_serde(&r_name) {
 			Some(s) => {
 				let field = Field {
 					name: String::new(),
@@ -592,8 +600,6 @@ fn add_simple_structs(elems: &[Element], cr8: &mut Crate) {
 				}
 			}
 		};
-
-		rustify_rtype(&mut t);
 
 		cr8.type_map.insert(t.name.clone(), crate_path.clone());
 		contents.types.insert(t.name.clone(), t);
@@ -721,6 +727,7 @@ fn map_type(rtype: &mut String) -> bool {
 	}
 
 	map_type_match! {
+		// Native type mappings
 		boolean => bool
 		double => f64
 		float => f32
@@ -734,11 +741,20 @@ fn map_type(rtype: &mut String) -> bool {
 		unsignedShort => u16
 		unsignedInt => u32
 		unsignedLong => u64
-		duration => chrono::TimeDelta
-		time => chrono::NaiveTime
-		dateTime => chrono::DateTime<chrono::Utc>
 
-		// UCI schema-specific type mappings.
+		// Requirement per CAL-016024
+		integer => i64
+		// Requirement per CAL-016027
+		duration => i64
+		// Requirement per CAL-016028
+		dateTime => i64
+		// Requirement per CAL-016029
+		time => i64
+
+		// UCI schema-specific type mappings for ergonomics.
+		DateTimeType => chrono::DateTime<chrono::Utc>
+		DurationType => chrono::TimeDelta
+		TimeType => chrono::NaiveTime
 		UniversallyUniqueIdentifierType => uuid::Uuid
 	}
 }
