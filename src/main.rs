@@ -9,14 +9,14 @@ mod traits;
 use contents::*;
 use names::*;
 use std::{
-	collections::{BTreeSet, HashMap, hash_map},
+	collections::{hash_map, BTreeSet, HashMap},
 	env,
 	fmt::Write as _,
 	path::{Path, PathBuf},
 	rc::Rc,
 };
-use traits::{Trait, add_mirror_traits};
-use xsd_generator::{BoundType, ContentType, Element, ExtRest, parse_schema};
+use traits::{add_mirror_traits, Trait};
+use xsd_generator::{parse_schema, BoundType, ContentType, Element, ExtRest};
 
 use crate::{
 	contents::serde_utils::{add_custom_serde, has_custom_serde},
@@ -147,15 +147,19 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 			variants.push(vnt);
 		}
 
-		let names: Vec<&str> = variants.iter().map(|v| &*v.name).collect();
-		let separated_variants = names.join(",\n\t");
+		// Construct the macro string.
+		let mut separated_variants = String::new();
+		for (vnt, orig) in variants.iter().zip(choice.values.iter()) {
+			// Format is: variant_name -> serialized_variant_name
+			write!(separated_variants, "\t{} -> \"{}\",\n", vnt.name, orig.name);
+		}
 		let mut serde_macro_impl = String::new();
 		_ = write!(
 			serde_macro_impl,
 			"struct_like_serde! {{\n\t{}\n",
 			choice_name
 		);
-		_ = write!(serde_macro_impl, "\t{},\n", separated_variants);
+		_ = write!(serde_macro_impl, "{separated_variants}");
 		_ = write!(serde_macro_impl, "}}");
 
 		let impls = vec![serde_macro_impl];
@@ -947,7 +951,7 @@ pub fn update_abstract_types(cr8: &mut Crate, src_path: &Path) {
 						docs: String::new(),
 						plurality: FieldPlurality::Optional,
 						attrs: vec![
-							"#[serde(skip_serializing_if = \"Option::is_none\")]".to_string(),
+							"#[serde(skip_serializing_if = \"Option::is_none\")]".to_string()
 						],
 					})
 				})

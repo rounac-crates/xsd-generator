@@ -278,12 +278,15 @@ pub mod time_delta_vec {
 const ENUM_SERDE_MACRO: &str = r#"
 /// Macro for ease of (de)serialize of choicetype enums, specifically as a
 /// work-around when using `quick-xml`.
+// `$en_name` is the enum identifier, which is what gets passed to serde.
+// `$vnt_name` is the actual variant name in the enum.
+// `$vnt_ser_name` is the serialized name of the variant (like serde rename).
 #[macro_export]
 macro_rules! struct_like_serde {
 	{
 		$en_name:ident
 		$(
-			$vnt_name:ident $(,)?
+			$vnt_name:ident -> $vnt_ser_name:literal $(,)?
 		)+
 	} => {
 		// Impl Serialize
@@ -294,7 +297,7 @@ macro_rules! struct_like_serde {
 
 				let mut st = ser.serialize_struct(stringify!($en_name), 1)?;
 				match self {
-					$(paste![Self :: $vnt_name (v)] => st.serialize_field(stringify!($vnt_name), v)),+
+					$(paste![Self :: $vnt_name (v)] => st.serialize_field($vnt_ser_name, v)),+
 				}?;
 				st.end()
 			}
@@ -307,7 +310,7 @@ macro_rules! struct_like_serde {
 				use paste::paste;
 
 				const FIELDS: &[&str] = &[
-					$( stringify!($vnt_name), )+
+					$( $vnt_ser_name, )+
 				];
 
 				struct EnumVisitor;
@@ -321,7 +324,7 @@ macro_rules! struct_like_serde {
 					fn visit_map<A: MapAccess<'v>>(self, mut map: A) -> Result<Self::Value, A::Error> {
 						let en = match map.next_key()? {
 							$(
-								Some(stringify!($vnt_name)) => paste! [$en_name :: $vnt_name (map.next_value()?)],
+								Some($vnt_ser_name) => paste! [$en_name :: $vnt_name (map.next_value()?)],
 							)+
 							Some(v) => return Err(A::Error::unknown_variant(v, FIELDS)),
 							_ => return Err(A::Error::missing_field("Any valid variant"))
