@@ -65,7 +65,6 @@ pub fn add_utils(cr8: &mut Crate) {
 	m.fns.push(NAIVETIME_MODS.to_owned());
 	m.fns.push(TIMEDELTA_MOD.to_owned());
 	m.fns.push(ENUM_SERDE_MACRO.to_owned());
-	m.fns.push(ABSTRACT_CONVERT_MACRO.to_owned());
 }
 
 const NAIVETIME_MODS: &str = r#"
@@ -345,62 +344,6 @@ macro_rules! struct_like_serde {
 				}
 
 				de.deserialize_map(EnumVisitor)
-			}
-		}
-	};
-}"#;
-
-const ABSTRACT_CONVERT_MACRO: &str = r#"
-/// Macro to impl [TryFrom] and [Into] for abstract type enums to the serde
-/// helper types.
-#[macro_export]
-macro_rules! abstract_convert_impls {
-	{
-		$en_name:ident - $serde_name:ident
-		$(
-			$vnt_name:ident $(,)?
-		)+
-	} => {
-		// TryFrom
-		impl TryFrom<$serde_name> for $en_name {
-			type Error = &'static str;
-			fn try_from(value: $serde_name) -> Result<Self, Self::Error> {
-				use paste::paste;
-
-				let mut count = 0;
-				let err = Err("Choice type expects one variant only.");
-
-				let mut ret = None;
-				$(
-				if let Some(v) = paste![value . $vnt_name] {
-					ret = Some(paste![$en_name :: $vnt_name (Box::new(v))]);
-					count += 1;
-				}
-				)+
-
-				if count != 1 {
-					err
-				} else {
-					// Safety: If count is > 0, then ret will have been set.
-					Ok(ret.unwrap())
-				}
-			}
-		}
-
-		// Into
-		impl Into<$serde_name> for $en_name {
-			fn into(self) -> $serde_name {
-				use paste::paste;
-				type IntoType = $serde_name;
-
-				match self {
-					$(
-						paste! [$en_name :: $vnt_name (v)] => { IntoType {
-							$vnt_name: Some(*v),
-							..IntoType::default()
-						}}
-					),+
-				}
 			}
 		}
 	};

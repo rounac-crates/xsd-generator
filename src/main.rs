@@ -9,14 +9,14 @@ mod traits;
 use contents::*;
 use names::*;
 use std::{
-	collections::{hash_map, BTreeSet, HashMap},
+	collections::{BTreeSet, HashMap, hash_map},
 	env,
 	fmt::Write as _,
 	path::{Path, PathBuf},
 	rc::Rc,
 };
-use traits::{add_mirror_traits, Trait};
-use xsd_generator::{parse_schema, BoundType, ContentType, Element, ExtRest};
+use traits::{Trait, add_mirror_traits};
+use xsd_generator::{BoundType, ContentType, Element, ExtRest, parse_schema};
 
 use crate::{
 	contents::serde_utils::{add_custom_serde, has_custom_serde},
@@ -25,7 +25,14 @@ use crate::{
 };
 
 static CHOICE_DERIVES: &[&str] = &["Clone", "Debug", "PartialEq"];
-static ENUM_DERIVES: &[&str] = &["Clone", "Debug", "Deserialize", "PartialEq", "Serialize"];
+static ENUM_DERIVES: &[&str] = &[
+	"Clone",
+	"Copy",
+	"Debug",
+	"Deserialize",
+	"PartialEq",
+	"Serialize",
+];
 static NON_ENUM_DERIVES: &[&str] = &[
 	"Clone",
 	"Debug",
@@ -67,14 +74,9 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 	_ = write!(contents.docs, "Module for all choice types.\n\n");
 
 	for choice in choices {
-		let mut attrs = Vec::new();
-
 		// Type must be pascal.
 		let mut choice_name = match to_pascal_case(&choice.name) {
-			Some(n) => {
-				attrs.push(format!(r#"#[serde(rename = "{}")]"#, choice.name));
-				n
-			}
+			Some(n) => n,
 			None => choice.name.clone(),
 		};
 		fix_illegal_name(&mut choice_name);
@@ -122,17 +124,13 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 				plurality,
 				boxed: false,
 				docs: String::new(),
+				rename: None,
 				attrs: Vec::new(),
 			};
 
-			let mut vnt_attrs = Vec::new();
-
 			// Variant name must be pascal.
 			let mut vnt_name = match to_pascal_case(&e.name) {
-				Some(n) => {
-					vnt_attrs.push(format!(r#"#[serde(rename = "{}")]"#, e.name));
-					n
-				}
+				Some(n) => n,
 				None => e.name.clone(),
 			};
 			fix_illegal_name(&mut vnt_name);
@@ -141,6 +139,7 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 				name: Rc::from(vnt_name.as_str()),
 				vtype: VariantType::Newtype(c),
 				docs: e.annotation.clone(),
+				rename: None,
 				attrs: Vec::new(),
 			};
 
@@ -151,7 +150,7 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 		let mut separated_variants = String::new();
 		for (vnt, orig) in variants.iter().zip(choice.values.iter()) {
 			// Format is: variant_name -> serialized_variant_name
-			write!(separated_variants, "\t{} -> \"{}\",\n", vnt.name, orig.name);
+			_ = write!(separated_variants, "\t{} -> \"{}\",\n", vnt.name, orig.name);
 		}
 		let mut serde_macro_impl = String::new();
 		_ = write!(
@@ -168,6 +167,7 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 			name: Rc::from(choice_name),
 			output: true,
 			docs: choice.annotation.clone(),
+			rename: None,
 			public: true,
 			attrs: Vec::new(),
 			derive: CHOICE_DERIVES.iter().map(|&v| v.to_owned()).collect(),
@@ -211,12 +211,12 @@ fn add_enum_types(elems: &[Element], cr8: &mut Crate) {
 			unreachable!()
 		};
 
-		let mut attrs = Vec::new();
+		let mut en_rename = None;
 
 		// Type must be pascal.
 		let mut en_name = match to_pascal_case(&en.name) {
 			Some(n) => {
-				attrs.push(format!(r#"#[serde(rename = "{}")]"#, en.name));
+				en_rename = Some(en.name.as_str().into());
 				n
 			}
 			None => en.name.clone(),
@@ -225,12 +225,11 @@ fn add_enum_types(elems: &[Element], cr8: &mut Crate) {
 
 		let mut variants = Vec::new();
 		for variant in r.enumeration.iter() {
-			let mut vnt_attrs = Vec::new();
-
 			// Variant name must be pascal.
+			let mut rename = None;
 			let mut vnt_name = match to_pascal_case(&variant.value) {
 				Some(n) => {
-					vnt_attrs.push(format!(r#"#[serde(rename = "{}")]"#, variant.value));
+					rename = Some(variant.value.as_str().into());
 					n
 				}
 				None => variant.value.clone(),
@@ -241,7 +240,8 @@ fn add_enum_types(elems: &[Element], cr8: &mut Crate) {
 				name: Rc::from(vnt_name.as_str()),
 				vtype: VariantType::Unit,
 				docs: variant.annotation.clone(),
-				attrs: vnt_attrs,
+				rename,
+				attrs: Vec::new(),
 			};
 
 			variants.push(vnt);
@@ -251,8 +251,9 @@ fn add_enum_types(elems: &[Element], cr8: &mut Crate) {
 			name: Rc::from(en_name),
 			output: true,
 			docs: en.annotation.clone(),
+			rename: en_rename,
 			public: true,
-			attrs,
+			attrs: Vec::new(),
 			derive: ENUM_DERIVES.iter().map(|&v| v.to_owned()).collect(),
 			any_features: BTreeSet::new(),
 			extends: None,
@@ -292,12 +293,12 @@ fn add_complex_structs(elems: &[Element], cr8: &mut Crate) {
 
 	for st in structs {
 		let mut fields = Vec::new();
-		let mut attrs = Vec::new();
+		let mut st_rename = None;
 
 		// Type must be pascal.
 		let mut st_name = match to_pascal_case(&st.name) {
 			Some(n) => {
-				attrs.push(format!(r#"#[serde(rename = "{}")]"#, st.name));
+				st_rename = Some(st.name.as_str().into());
 				n
 			}
 			None => st.name.clone(),
@@ -322,11 +323,12 @@ fn add_complex_structs(elems: &[Element], cr8: &mut Crate) {
 		// Output remaining contents
 		for field in st.values.iter() {
 			let mut field_attrs = Vec::new();
+			let mut field_rename = None;
 
 			// Fix type name
 			let mut field_name = match to_snake_case(&field.name) {
 				Some(n) => {
-					field_attrs.push(format!(r#"#[serde(rename = "{}")]"#, field.name));
+					field_rename = Some(field.name.as_str().into());
 					n
 				}
 				None => field.name.clone(),
@@ -370,6 +372,7 @@ fn add_complex_structs(elems: &[Element], cr8: &mut Crate) {
 				name: field_name,
 				public: true,
 				docs: field.annotation.clone(),
+				rename: field_rename,
 				typename: type_name,
 				plurality,
 				boxed: false,
@@ -385,7 +388,8 @@ fn add_complex_structs(elems: &[Element], cr8: &mut Crate) {
 			output: !st.abstract_, // Do not output abstract types.
 			public: true,
 			docs: st.annotation.clone(),
-			attrs,
+			rename: st_rename,
+			attrs: Vec::new(),
 			derive: NON_ENUM_DERIVES.iter().map(|&v| v.to_owned()).collect(),
 			any_features: BTreeSet::new(),
 			extends: parent,
@@ -430,7 +434,6 @@ fn add_simple_structs(elems: &[Element], cr8: &mut Crate) {
 		};
 
 		let mut restriction_docs = String::new();
-		let mut attrs = Vec::new();
 
 		// Create documentation for any restrictions
 		if let Some(ref p) = r.pattern {
@@ -474,9 +477,10 @@ fn add_simple_structs(elems: &[Element], cr8: &mut Crate) {
 		}
 
 		// Type must be pascal.
+		let mut st_rename = None;
 		let mut st_name = match to_pascal_case(&st.name) {
 			Some(n) => {
-				attrs.push(format!(r#"#[serde(rename = "{}")]"#, st.name));
+				st_rename = Some(st.name.as_str().into());
 				n
 			}
 			None => st.name.clone(),
@@ -499,6 +503,7 @@ fn add_simple_structs(elems: &[Element], cr8: &mut Crate) {
 					plurality: FieldPlurality::None,
 					boxed: false,
 					docs: String::new(),
+					rename: None,
 					attrs: vec![format!("#[serde(with = \"{s}\")]")],
 				};
 
@@ -507,7 +512,8 @@ fn add_simple_structs(elems: &[Element], cr8: &mut Crate) {
 					output: true,
 					public: true,
 					docs,
-					attrs,
+					rename: st_rename,
+					attrs: Vec::new(),
 					derive: NON_ENUM_DERIVES.iter().map(|&v| v.to_owned()).collect(),
 					any_features: BTreeSet::new(),
 					extends: None,
@@ -521,6 +527,7 @@ fn add_simple_structs(elems: &[Element], cr8: &mut Crate) {
 					output: true,
 					public: true,
 					docs,
+					rename: None,
 					attrs: Vec::new(), // Ignore all attrs from above
 					derive: Vec::new(),
 					any_features: BTreeSet::new(),
@@ -568,15 +575,15 @@ fn add_schema_elements(elems: &[Element], cr8: &mut Crate) {
 			plurality: FieldPlurality::None,
 			boxed: false,
 			attrs: vec!["#[serde(flatten)]".to_string()],
+			rename: None,
 			docs: String::new(),
 		};
 
-		let mut attrs = Vec::new();
-
 		// Type must be pascal.
+		let mut rename = None;
 		let mut elem_name = match to_pascal_case(&elem.name) {
 			Some(n) => {
-				attrs.push(format!(r#"#[serde(rename = "{}")]"#, elem.name));
+				rename = Some(elem.name.as_str().into());
 				n
 			}
 			None => elem.name.clone(),
@@ -595,7 +602,8 @@ fn add_schema_elements(elems: &[Element], cr8: &mut Crate) {
 			output: true,
 			public: true,
 			docs: elem.annotation.clone(),
-			attrs,
+			rename,
+			attrs: Vec::new(),
 			derive: NON_ENUM_DERIVES.iter().map(|&v| v.to_owned()).collect(),
 			any_features: BTreeSet::new(),
 			extends: None,
@@ -854,6 +862,7 @@ fn flatten_extends(cr8: &mut Crate, mod_path: &Path) {
 			name: String::new(),
 			typename: rtype.name.to_string(),
 			attrs: Vec::new(),
+			rename: None,
 			docs: String::new(),
 			public: true,
 			plurality: FieldPlurality::None,
@@ -862,6 +871,7 @@ fn flatten_extends(cr8: &mut Crate, mod_path: &Path) {
 		let rtype_variant = Variant {
 			name: rtype.name.clone(),
 			docs: String::new(),
+			rename: rtype.rename.clone(),
 			attrs: Vec::new(),
 			vtype: VariantType::Newtype(rtype_field),
 		};
@@ -871,7 +881,7 @@ fn flatten_extends(cr8: &mut Crate, mod_path: &Path) {
 			match ptype.members {
 				TypeMembers::Fields(_) => {
 					ptype.attrs.clear();
-					ptype.derive = ENUM_DERIVES.iter().map(|&v| v.to_owned()).collect();
+					ptype.derive = CHOICE_DERIVES.iter().map(|&v| v.to_owned()).collect();
 					ptype.members = TypeMembers::Variants(vec![rtype_variant])
 				}
 				TypeMembers::Variants(ref mut variants) => variants.push(rtype_variant),
@@ -905,26 +915,18 @@ pub fn update_abstract_types(cr8: &mut Crate, src_path: &Path) {
 			continue;
 		};
 
-		let mut serde_clone = rtype.clone();
-
-		// Add the serde attributes for conversion.
-		rtype
-			.attrs
-			.push(format!("#[serde(into = \"{}Serde\")]", rtype.name));
-		rtype
-			.attrs
-			.push(format!("#[serde(try_from = \"{}Serde\")]", rtype.name));
-
 		// Update output and add appropriate impl for serde.
 		match rtype.members {
 			// Variants are what we want for abstract types.
-			TypeMembers::Variants(ref variants) => {
-				let mut serde_macro_impl = format!(
-					"abstract_convert_impls! {{\n\t{} - {}Serde\n",
-					rtype.name, rtype.name
-				);
+			TypeMembers::Variants(ref mut variants) => {
+				let mut serde_macro_impl = format!("struct_like_serde! {{\n\t{}\n", rtype.name);
 				for variant in variants {
-					_ = write!(serde_macro_impl, "\t{},\n", variant.name);
+					let rename = variant.rename.as_ref().unwrap_or(&variant.name);
+					_ = write!(serde_macro_impl, "\t{} -> \"{}\",\n", variant.name, rename);
+
+					// TODO: Consider moving this elsewhere or adding some indication of
+					//       whether the rename should always output the serde tag.
+					variant.rename = None;
 				}
 				_ = write!(serde_macro_impl, "}}");
 				rtype.impls.push(serde_macro_impl);
@@ -933,44 +935,6 @@ pub fn update_abstract_types(cr8: &mut Crate, src_path: &Path) {
 			TypeMembers::Fields(_) => unreachable!(),
 			TypeMembers::Alias(_) => panic!("Alias not expected when processing abstract types."),
 		};
-
-		// Serde clone stuff
-		let fields: Vec<Field> = match serde_clone.members {
-			TypeMembers::Variants(variants) => variants
-				.into_iter()
-				.filter_map(|v| {
-					let VariantType::Newtype(v_field) = v.vtype else {
-						return None;
-					};
-
-					Some(Field {
-						name: v.name.to_string(),
-						typename: v_field.typename,
-						public: true,
-						boxed: false,
-						docs: String::new(),
-						plurality: FieldPlurality::Optional,
-						attrs: vec![
-							"#[serde(skip_serializing_if = \"Option::is_none\")]".to_string()
-						],
-					})
-				})
-				.collect(),
-			_ => unreachable!(),
-		};
-
-		// Update values for this type.
-		let new_name = format!("{}Serde", serde_clone.name);
-		serde_clone.name = Rc::from(new_name.as_str());
-		serde_clone.public = false;
-		serde_clone.impls.clear();
-		serde_clone.members = TypeMembers::Fields(fields);
-		serde_clone.derive = NON_ENUM_DERIVES.iter().map(|&v| v.to_owned()).collect();
-		serde_clone.attrs.push("#[serde(default)]".to_string());
-		serde_clone
-			.attrs
-			.push("#[allow(non_snake_case)]".to_string());
-		src_mod.types.insert(serde_clone.name.clone(), serde_clone);
 	}
 }
 

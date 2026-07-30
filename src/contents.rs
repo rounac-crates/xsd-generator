@@ -398,6 +398,7 @@ pub struct Field {
 	pub plurality: FieldPlurality,
 	pub boxed: bool,
 	pub docs: String,
+	pub rename: Option<Rc<str>>,
 	pub attrs: Vec<String>,
 }
 impl Field {
@@ -438,6 +439,9 @@ impl Display for Field {
 
 		// Output field
 		write!(f, "#[doc = r#\"{}\"#]\n", self.docs.trim())?;
+		if let Some(ref name) = self.rename {
+			write!(f, "#[serde(rename = \"{name}\")]")?;
+		}
 		for attr in self.attrs.iter() {
 			write!(f, "{attr}\n")?;
 		}
@@ -450,6 +454,7 @@ pub struct Variant {
 	pub name: Rc<str>,
 	pub vtype: VariantType,
 	pub docs: String,
+	pub rename: Option<Rc<str>>,
 	pub attrs: Vec<String>,
 }
 impl Display for Variant {
@@ -519,6 +524,7 @@ pub struct RustType {
 	pub public: bool,
 	/// Documentation without additional syntax.
 	pub docs: String,
+	pub rename: Option<Rc<str>>,
 	/// Full attr strings without newline.
 	pub attrs: Vec<String>,
 	// Separate derive from attrs for easy modification.
@@ -688,6 +694,11 @@ fn output_struct_fields(f: &mut fmt::Formatter, fields: &[Field]) -> fmt::Result
 				write!(f, "\t#[doc = r#\"{}\"#]\n", field.docs.trim())?;
 			}
 
+			// Rename
+			if let Some(ref name) = field.rename {
+				write!(f, "#[serde(rename = \"{name}\")]")?;
+			}
+
 			// Attributes
 			for attr in field.attrs.iter() {
 				write!(f, "\t{attr}\n")?;
@@ -728,6 +739,11 @@ fn output_enum_variants(f: &mut fmt::Formatter, variants: &[Variant]) -> fmt::Re
 		// Docs
 		if variant.docs.trim().len() > 0 {
 			write!(f, "\t#[doc = r#\"{}\"#]\n", variant.docs.trim())?;
+		}
+
+		// Rename
+		if let Some(ref name) = variant.rename {
+			write!(f, "\t#[serde(rename = \"{name}\")]\n")?;
 		}
 
 		// Attributes
