@@ -696,7 +696,7 @@ fn output_struct_fields(f: &mut fmt::Formatter, fields: &[Field]) -> fmt::Result
 
 			// Rename
 			if let Some(ref name) = field.rename {
-				write!(f, "#[serde(rename = \"{name}\")]")?;
+				write!(f, "\t#[serde(rename = \"{name}\")]\n")?;
 			}
 
 			// Attributes
