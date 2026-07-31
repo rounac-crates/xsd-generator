@@ -285,6 +285,7 @@ macro_rules! struct_like_serde {
 	{
 		$en_name:ident
 		$(
+			$(#[$vnt_type:ty => $serde_with_mod:path])?
 			$vnt_name:ident -> $vnt_ser_name:literal $(,)?
 		)+
 	} => {
@@ -296,7 +297,20 @@ macro_rules! struct_like_serde {
 
 				let mut st = ser.serialize_struct(stringify!($en_name), 1)?;
 				match self {
-					$(paste![Self :: $vnt_name (v)] => st.serialize_field($vnt_ser_name, v)),+
+					$(paste![Self :: $vnt_name (v)] => {
+						$(
+						use serde::ser::{Serializer, Serialize};
+						struct Wrapper<'a>(&'a $vnt_type);
+						impl<'a> Serialize for Wrapper<'a> {
+							fn serialize<S: Serializer>(&self, se: S) -> Result<S::Ok, S::Error> {
+								paste![$serde_with_mod :: serialize ( self.0 , se )]
+							}
+						}
+						let v = &Wrapper(v);
+						)?
+
+						st.serialize_field($vnt_ser_name, v)
+					}),+
 				}?;
 				st.end()
 			}
@@ -323,7 +337,27 @@ macro_rules! struct_like_serde {
 					fn visit_map<A: MapAccess<'v>>(self, mut map: A) -> Result<Self::Value, A::Error> {
 						let en = match map.next_key()? {
 							$(
-								Some($vnt_ser_name) => paste! [$en_name :: $vnt_name (map.next_value()?)],
+							Some($vnt_ser_name) => {
+								use core::marker::PhantomData;
+								let d = PhantomData;
+								$(
+								use serde::de::{Deserializer, DeserializeSeed};
+
+								struct Seed;
+								impl<'de> DeserializeSeed<'de> for Seed {
+									type Value = $vnt_type;
+
+									fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<Self::Value, D::Error> {
+										paste![$serde_with_mod :: deserialize ( de )]
+									}
+								}
+								// `_p` helps compiler infer type of the unused `d` from above.
+								let _p: PhantomData<$vnt_type> = d;
+								let d = Seed;
+								)?
+
+								paste! [$en_name :: $vnt_name (map.next_value_seed(d)?)]
+							}
 							)+
 							Some(v) => return Err(A::Error::unknown_variant(v, FIELDS)),
 							_ => return Err(A::Error::missing_field("Any valid variant"))

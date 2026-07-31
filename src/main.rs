@@ -9,14 +9,14 @@ mod traits;
 use contents::*;
 use names::*;
 use std::{
-	collections::{BTreeSet, HashMap, hash_map},
+	collections::{hash_map, BTreeSet, HashMap},
 	env,
 	fmt::Write as _,
 	path::{Path, PathBuf},
 	rc::Rc,
 };
-use traits::{Trait, add_mirror_traits};
-use xsd_generator::{BoundType, ContentType, Element, ExtRest, parse_schema};
+use traits::{add_mirror_traits, Trait};
+use xsd_generator::{parse_schema, BoundType, ContentType, Element, ExtRest};
 
 use crate::{
 	contents::serde_utils::{add_custom_serde, has_custom_serde},
@@ -117,7 +117,10 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 			};
 			fix_illegal_name(&mut tn);
 
-			let c = Field {
+			// Map type before custom serde.
+			map_type(&mut tn);
+
+			let mut c = Field {
 				name: String::new(),
 				typename: tn,
 				public: true,
@@ -127,6 +130,7 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 				rename: None,
 				attrs: Vec::new(),
 			};
+			add_custom_serde(&mut c);
 
 			// Variant name must be pascal.
 			let mut vnt_name = match to_pascal_case(&e.name) {
@@ -149,6 +153,20 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 		// Construct the macro string.
 		let mut separated_variants = String::new();
 		for (vnt, orig) in variants.iter().zip(choice.values.iter()) {
+			let VariantType::Newtype(ref field) = vnt.vtype else {
+				unreachable!()
+			};
+
+			// Check for the serde_with
+			if !field.attrs.is_empty() {
+				// Extract module name
+				let mut quotes = field.attrs[0].match_indices('"');
+				let start = quotes.next().unwrap().0 + 1;
+				let end = quotes.next().unwrap().0;
+				let module = &field.attrs[0][start..end];
+				_ = write!(separated_variants, "\t#[{} => {module}]\n", field.typename);
+			}
+
 			// Format is: variant_name -> serialized_variant_name
 			_ = write!(separated_variants, "\t{} -> \"{}\",\n", vnt.name, orig.name);
 		}
@@ -650,6 +668,11 @@ fn rustify_rtype(rtype: &mut RustType) {
 /// Modify type to another type if desired, returns `true` if modified.
 ///
 /// Primarily intended to map XSD native types to Rust native types.
+// TODO: Add a config/input file that allows user-specified type mappings, only
+//       for the non-primitive; or make the current primitive mappings the
+//       defaults. Easy to use (serde) into/try_from, but with will be harder
+//       since those modules are all hard-coded right now; would need dynamic
+//       file/module inclusion logic.
 fn map_type(rtype: &mut String) -> bool {
 	macro_rules! map_type_match {
 		{$($from_type:ident => $type_1:ty)*} => {
