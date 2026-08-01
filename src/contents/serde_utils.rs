@@ -410,10 +410,10 @@ macro_rules! struct_like_serde {
 		// Impl Serialize
 		impl serde::Serialize for $en_name {
 			fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-				use serde::ser::SerializeStruct;
+				use serde::ser::SerializeMap;
 				use paste::paste;
 
-				let mut st = ser.serialize_struct(stringify!($en_name), 1)?;
+				let mut map = ser.serialize_map(Some(1))?;
 				match self {
 					$(paste![Self :: $vnt_name (v)] => {
 						$(
@@ -427,10 +427,11 @@ macro_rules! struct_like_serde {
 						let v = &Wrapper(v);
 						)?
 
-						st.serialize_field($vnt_ser_name, v)
+						map.serialize_entry($vnt_ser_name, v)
 					}),+
 				}?;
-				st.end()
+
+				map.end()
 			}
 		}
 
