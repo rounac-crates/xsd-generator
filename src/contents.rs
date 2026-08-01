@@ -19,6 +19,8 @@ pub struct Crate {
 	/// `crate/mod1/mod2` --> `crate::mod1::mod2`, and the string is the file
 	/// contents.
 	pub contents: HashMap<PathBuf, Module>,
+	/// Like `contents`, but maps an existing file to a module path for copying.
+	pub custom_contents: HashMap<PathBuf, PathBuf>,
 	/// Map of typename --> crate location. See `contents` for location format.
 	pub type_map: HashMap<Rc<str>, PathBuf>,
 	/// Valid dependency string for `Cargo.toml` without trailing newline.
@@ -31,6 +33,7 @@ impl Crate {
 		Crate {
 			name: name.into(),
 			contents: HashMap::new(),
+			custom_contents: HashMap::new(),
 			type_map: HashMap::new(),
 			deps: Vec::new(),
 			features: Vec::new(),
@@ -248,6 +251,27 @@ impl Crate {
 			let mod_file = &mut fs::File::create(mod_path)?;
 			//mod_file.write(contents.as_bytes())?;
 			_ = write!(mod_file, "{contents}");
+		}
+
+		// Copy all custom files to the crate.
+		for (module, source) in self.custom_contents.iter() {
+			println!(
+				"Copying {} to module {}",
+				source.to_str().unwrap(),
+				module.to_str().unwrap()
+			);
+
+			// Create the module directory
+			let mod_rel_path = module.strip_prefix("crate/").unwrap();
+			let mod_path = src_path.join(mod_rel_path);
+			if let Some(mod_parents) = mod_rel_path.ancestors().skip(1).next() {
+				let mod_dir = src_path.join(mod_parents);
+				fs::DirBuilder::new().recursive(true).create(mod_dir)?;
+			}
+
+			// Create the module file as copy of source file.
+			let mod_path = mod_path.with_extension("rs");
+			std::fs::copy(mod_path, source)?;
 		}
 
 		Ok(())
