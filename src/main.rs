@@ -1,6 +1,7 @@
 //! Program which takes in UCI XSD files and creates a crate.
 //!
 
+mod config;
 mod contents;
 mod impls;
 mod names;
