@@ -9,14 +9,14 @@ mod traits;
 use contents::*;
 use names::*;
 use std::{
-	collections::{hash_map, BTreeSet, HashMap},
+	collections::{BTreeSet, HashMap, hash_map},
 	env,
 	fmt::Write as _,
 	path::{Path, PathBuf},
 	rc::Rc,
 };
-use traits::{add_mirror_traits, Trait};
-use xsd_generator::{parse_schema, BoundType, ContentType, Element, ExtRest};
+use traits::{Trait, add_mirror_traits};
+use xsd_generator::{BoundType, ContentType, Element, ExtRest, parse_schema};
 
 use crate::{
 	contents::serde_utils::{add_custom_serde, has_custom_serde},
