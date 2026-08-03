@@ -12,6 +12,7 @@ pub fn has_custom_serde(typename: &str) -> Option<&str> {
 	match typename {
 		"chrono::NaiveTime" => Some("crate::serde_utils::naive_time"),
 		"chrono::TimeDelta" => Some("crate::serde_utils::time_delta"),
+		//"uuid::Uuid" => Some("uuid::serde::simple"),
 		_ => None,
 	}
 }
@@ -42,6 +43,18 @@ pub fn add_custom_serde(field: &mut Field) -> bool {
 
 			true
 		}
+		/*"uuid::Uuid" => {
+			let base_path = "crate::serde_utils::uuid_mod";
+			let mod_path = match field.plurality {
+				FieldPlurality::None => format_args!("{base_path}"),
+				FieldPlurality::Optional => format_args!("{base_path}_opt"),
+				FieldPlurality::Plural => format_args!("{base_path}_vec"),
+				FieldPlurality::OptionalPlural => format_args!("{base_path}_opt_vec"),
+			};
+			field.attrs.push(format!("#[serde(with = \"{mod_path}\")]"));
+
+			true
+		}*/
 		_ => false,
 	}
 }
@@ -265,6 +278,111 @@ pub mod time_delta_vec {
 			};
 
 			while let Some(v) = seq.next_element()? {
+				values.push(v);
+			}
+
+			Ok(values)
+		}
+	}
+}
+"#;
+
+const UUID_MOD: &str = r#"
+/// Alies for the following Uuid wrapper mods.
+pub(crate) use uuid::serde::simple as uuid_mod;
+
+/// Pass-through mod when [uuid::Uuid] is wrapped in [Option].
+pub mod uuid_mod_opt {
+	use super::uuid_mod;
+	use uuid::Uuid;
+	use serde::{de::{Error, Visitor}, Deserializer, Serialize, Serializer};
+
+	type SerdeType = Option<Uuid>;
+
+	pub fn serialize<S: Serializer>(t: &SerdeType, ser: S) -> Result<S::Ok, S::Error> {
+		struct Wrapper(Uuid);
+		impl Serialize for Wrapper {
+			fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+				uuid_mod::serialize(self.0, ser)
+			}
+		}
+
+		match t.as_ref() {
+			Some(v) => {
+				ser.serialize_some(Wrapper(v))
+			},
+			None => ser.serialize_none(),
+		}
+	}
+	pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<SerdeType, D::Error> {
+		de.deserialize_option(UuidVisitor)
+	}
+
+	struct UuidVisitor;
+	impl<'de> Visitor<'de> for UuidVisitor {
+		type Value = SerdeType;
+
+		fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			f.write_str("optional uuid::Uuid")
+		}
+
+		fn visit_none<E: Error>(self) -> Result<SerdeType, E> {
+			Ok(None)
+		}
+		fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<SerdeType, D::Error> {
+			uuid_mod::deserialize(deserializer).map(|v| Some(v))
+		}
+	}
+}
+/// Pass-through mod when [uuid::Uuid] is wrapped in [Vec].
+pub mod uuid_mod_vec {
+	use super::uuid_mod;
+	use uuid::Uuid;
+	use serde::{de::{Error, Visitor}, Deserializer, Serializer};
+	use serde::{
+		de::{DeserializeSeed, SeqAccess, Visitor},
+		ser::SerializeSeq,
+		Deserializer,
+		Serializer
+	};
+
+	type SerdeType = Vec<Uuid>;
+
+	pub fn serialize<S: Serializer>(t: &SerdeType, ser: S) -> Result<S::Ok, S::Error> {
+		let mut seq = ser.serialize_seq(Some(t.len()))?;
+		for v in t.iter() {
+			seq.serialize_element(uuid_mod::serialize(v, ser)?)?;
+		}
+		seq.end()
+	}
+	pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<SerdeType, D::Error> {
+		de.deserialize_seq(UuidVisitor)
+	}
+
+	struct UuidSeed;
+	impl<'de> DeserializeSeed<'de> for UuidSeed {
+		type Value = Uuid;
+
+		fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<Self::Value, D::Error> {
+			uuid_mod::deserialize(de)
+		}
+	}
+
+	struct UuidVisitor;
+	impl<'de> Visitor<'de> for UuidVisitor {
+		type Value = SerdeType;
+
+		fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			f.write_str("sequence of uuid::Uuid")
+		}
+
+		fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<SerdeType, A::Error> {
+			let mut values = match seq.size_hint() {
+				Some(s) => Vec::with_capacity(s),
+				None => Vec::new(),
+			};
+
+			while let Some(v) = seq.next_element_seed(UuidSeed)? {
 				values.push(v);
 			}
 
