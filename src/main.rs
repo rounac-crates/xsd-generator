@@ -20,6 +20,7 @@ use traits::{Trait, add_mirror_traits};
 use xsd_generator::{BoundType, ContentType, Element, ExtRest, parse_schema};
 
 use crate::{
+	config::GenConfig,
 	contents::serde_utils::{add_custom_serde, has_custom_serde},
 	impls::{impl_attrs, impls_for_types},
 	traits::impl_mirror_trait_fn,
@@ -971,6 +972,7 @@ fn main() {
 
 	let mut output_dir: PathBuf = Path::new(".").into();
 	let mut crate_name = None;
+	let mut gen_config = GenConfig::default();
 	let mut xsd_files = Vec::new();
 	_ = args.next(); // Skip first arg.
 	while let Some(arg) = args.next() {
@@ -978,6 +980,27 @@ fn main() {
 			// Parse options
 			opt if opt.starts_with('-') => {
 				match opt.as_str() {
+					// Config file
+					"-c" => {
+						if let Some(ref next_arg) = args.next() {
+							match config::config_from_file(next_arg) {
+								Ok(c) => {
+									gen_config = {
+										println!("Using config from {next_arg:?}");
+										c
+									}
+								}
+								Err(e) => {
+									eprintln!("Error with config file: {e}");
+									return;
+								}
+							}
+						} else {
+							eprintln!("'-c' expects an argument");
+							return;
+						}
+					}
+					// Crate name
 					"-n" => {
 						if let Some(next_arg) = args.next() {
 							crate_name = Some(next_arg);
