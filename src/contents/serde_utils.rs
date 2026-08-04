@@ -72,13 +72,132 @@ pub fn add_utils(cr8: &mut Crate) {
 		.or_default();
 	_ = write!(m.docs, "Module with serde helpers and utilities.");
 
+	// Paste macro for macros.
+	m.imports.insert("use paste::paste;".to_string());
+
 	cr8.deps.push("iso8601 = \"0.6.3\"".to_owned());
 
 	// Insert everything
+	m.fns.push(SERDE_MOD_EXTRAS_MACRO.to_owned());
 	m.fns.push(NAIVETIME_MODS.to_owned());
 	m.fns.push(TIMEDELTA_MOD.to_owned());
 	m.fns.push(ENUM_SERDE_MACRO.to_owned());
 }
+
+const SERDE_MOD_EXTRAS_MACRO: &str = r#"
+/// Creates serde modules for [`Option<T>`] and [`Vec<T>`], where `T` is given
+/// by `$target`, and forwards the serde work to the given module `$base_mod`.
+///
+/// The resulting modules are named after the base module but with "_opt" and
+/// "_vec" suffixes for [`Option<T>`] and [`Vec<T>`] wrapped types,
+/// respectively.
+macro_rules! serde_mod_extras {
+	($base_mod:path, $target:ty) => {
+		// Option-wrapped type module.
+		paste! {
+		pub mod [< $base_mod _opt >] {
+			use super::$base_mod;
+			use serde::{de::{Error, Visitor}, Deserializer, Serialize, Serializer};
+			use std::fmt;
+
+			type SerdeType = Option<$target>;
+
+			pub(super) struct Wrapper<'a>(pub &'a $target);
+			impl<'a> Serialize for Wrapper<'a> {
+				fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+					$base_mod::serialize(self.0, ser)
+				}
+			}
+
+			pub fn serialize<S: Serializer>(t: &SerdeType, ser: S) -> Result<S::Ok, S::Error> {
+				match t.as_ref() {
+					Some(v) => {
+						ser.serialize_some(&Wrapper(v))
+					},
+					None => ser.serialize_none(),
+				}
+			}
+			pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<SerdeType, D::Error> {
+				de.deserialize_option(TypeVisitor)
+			}
+
+			struct TypeVisitor;
+			impl<'de> Visitor<'de> for TypeVisitor {
+				type Value = SerdeType;
+
+				fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+					f.write_str(concat!("optional ", stringify!($target)))
+				}
+
+				fn visit_none<E: Error>(self) -> Result<SerdeType, E> {
+					Ok(None)
+				}
+				fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<SerdeType, D::Error> {
+					$base_mod::deserialize(deserializer).map(|v| Some(v))
+				}
+			}
+		}
+
+		// Vec-wrapped type module.
+		pub mod [< $base_mod _vec >] {
+			// Reuse `Wrapper` type from opt mod.
+			use super::$base_mod;
+			use super::[< $base_mod _opt >] ::Wrapper;
+			use serde::{
+				de::{DeserializeSeed, SeqAccess, Visitor},
+				ser::SerializeSeq,
+				Deserializer,
+				Serializer
+			};
+			use std::fmt;
+
+			type SerdeType = Vec<$target>;
+
+			pub fn serialize<S: Serializer>(t: &SerdeType, ser: S) -> Result<S::Ok, S::Error> {
+				let mut seq = ser.serialize_seq(Some(t.len()))?;
+				for v in t.iter() {
+					seq.serialize_element(&Wrapper(v))?;
+				}
+				seq.end()
+			}
+			pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<SerdeType, D::Error> {
+				de.deserialize_seq(TypeVisitor)
+			}
+
+			struct TypeSeed;
+			impl<'de> DeserializeSeed<'de> for TypeSeed {
+				type Value = $target;
+
+				fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<Self::Value, D::Error> {
+					$base_mod::deserialize(de)
+				}
+			}
+
+			struct TypeVisitor;
+			impl<'de> Visitor<'de> for TypeVisitor {
+				type Value = SerdeType;
+
+				fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+					f.write_str(concat!("sequence of ", stringify!($target)))
+				}
+
+				fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<SerdeType, A::Error> {
+					let mut values = match seq.size_hint() {
+						Some(s) => Vec::with_capacity(s),
+						None => Vec::new(),
+					};
+
+					while let Some(v) = seq.next_element_seed(TypeSeed)? {
+						values.push(v);
+					}
+
+					Ok(values)
+				}
+			}
+		}
+		}
+	};
+}"#;
 
 const NAIVETIME_MODS: &str = r#"
 /// (De)Serializer for [chrono::NaiveTime] that add/strips the 'Z' suffix from
@@ -107,41 +226,9 @@ pub mod naive_time {
 		}
 	}
 }
-/// Pass-through mod when [chrono::NaiveTime] is wrapped in [Option].
-pub mod naive_time_opt {
-	use super::naive_time;
-	use chrono::NaiveTime;
-	use serde::{de::{Error, Visitor}, Deserializer, Serializer};
-	use core::fmt;
 
-	type SerdeType = Option<NaiveTime>;
-
-	pub fn serialize<S: Serializer>(t: &SerdeType, ser: S) -> Result<S::Ok, S::Error> {
-		match t.as_ref() {
-			Some(v) => ser.serialize_some(naive_time::get_raw_value(v).as_str()),
-			None => ser.serialize_none(),
-		}
-	}
-	pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<SerdeType, D::Error> {
-		de.deserialize_option(NtVisitor)
-	}
-
-	struct NtVisitor;
-	impl<'de> Visitor<'de> for NtVisitor {
-		type Value = SerdeType;
-
-		fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-			f.write_str("optional chrono::NaiveTime")
-		}
-
-		fn visit_none<E: Error>(self) -> Result<SerdeType, E> {
-			Ok(None)
-		}
-		fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<SerdeType, D::Error> {
-			naive_time::deserialize(deserializer).map(|v| Some(v))
-		}
-	}
-}
+// For the Option- and Vec- wrapped variants.
+serde_mod_extras!(naive_time, chrono::NaiveTime);
 "#;
 
 const TIMEDELTA_MOD: &str = r#"
@@ -202,194 +289,17 @@ pub mod time_delta {
 		}
 	}
 }
-/// Pass-through mod when [chrono::TimeDelta] is wrapped in [Option].
-pub mod time_delta_opt {
-	use super::time_delta;
-	use core::fmt;
-	use chrono::TimeDelta;
-	use serde::{de::{Error, Visitor}, Deserializer, Serializer};
 
-	type SerdeType = Option<TimeDelta>;
-
-	pub fn serialize<S: Serializer>(t: &SerdeType, ser: S) -> Result<S::Ok, S::Error> {
-		match t.as_ref() {
-			Some(v) => ser.serialize_some(time_delta::get_raw_value(v).as_str()),
-			None => ser.serialize_none(),
-		}
-	}
-	pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<SerdeType, D::Error> {
-		de.deserialize_option(TdVisitor)
-	}
-
-	struct TdVisitor;
-	impl<'de> Visitor<'de> for TdVisitor {
-		type Value = SerdeType;
-
-		fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-			f.write_str("optional chrono::TimeDelta")
-		}
-
-		fn visit_none<E: Error>(self) -> Result<SerdeType, E> {
-			Ok(None)
-		}
-		fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<SerdeType, D::Error> {
-			time_delta::deserialize(deserializer).map(|v| Some(v))
-		}
-	}
-}
-/// Pass-through mod when [chrono::TimeDelta] is wrapped in [Vec].
-pub mod time_delta_vec {
-	use super::time_delta;
-	use core::fmt;
-	use chrono::TimeDelta;
-	use serde::{
-		de::{SeqAccess, Visitor},
-		ser::SerializeSeq,
-		Deserializer,
-		Serializer
-	};
-
-	type SerdeType = Vec<TimeDelta>;
-
-	pub fn serialize<S: Serializer>(t: &SerdeType, ser: S) -> Result<S::Ok, S::Error> {
-		let mut seq = ser.serialize_seq(Some(t.len()))?;
-		for v in t.iter() {
-			let rv = time_delta::get_raw_value(v);
-			seq.serialize_element(rv.as_str())?;
-		}
-		seq.end()
-	}
-	pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<SerdeType, D::Error> {
-		de.deserialize_seq(TdVisitor)
-	}
-
-	struct TdVisitor;
-	impl<'de> Visitor<'de> for TdVisitor {
-		type Value = SerdeType;
-
-		fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-			f.write_str("sequence of chrono::TimeDelta")
-		}
-
-		fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<SerdeType, A::Error> {
-			let mut values = match seq.size_hint() {
-				Some(s) => Vec::with_capacity(s),
-				None => Vec::new(),
-			};
-
-			while let Some(v) = seq.next_element()? {
-				values.push(v);
-			}
-
-			Ok(values)
-		}
-	}
-}
+// For the Option- and Vec- wrapped variants.
+serde_mod_extras!(time_delta, chrono::TimeDelta);
 "#;
 
 const UUID_MOD: &str = r#"
 /// Alies for the following Uuid wrapper mods.
 pub(crate) use uuid::serde::simple as uuid_mod;
 
-/// Pass-through mod when [uuid::Uuid] is wrapped in [Option].
-pub mod uuid_mod_opt {
-	use super::uuid_mod;
-	use uuid::Uuid;
-	use serde::{de::{Error, Visitor}, Deserializer, Serialize, Serializer};
-
-	type SerdeType = Option<Uuid>;
-
-	pub fn serialize<S: Serializer>(t: &SerdeType, ser: S) -> Result<S::Ok, S::Error> {
-		struct Wrapper(Uuid);
-		impl Serialize for Wrapper {
-			fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-				uuid_mod::serialize(self.0, ser)
-			}
-		}
-
-		match t.as_ref() {
-			Some(v) => {
-				ser.serialize_some(Wrapper(v))
-			},
-			None => ser.serialize_none(),
-		}
-	}
-	pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<SerdeType, D::Error> {
-		de.deserialize_option(UuidVisitor)
-	}
-
-	struct UuidVisitor;
-	impl<'de> Visitor<'de> for UuidVisitor {
-		type Value = SerdeType;
-
-		fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-			f.write_str("optional uuid::Uuid")
-		}
-
-		fn visit_none<E: Error>(self) -> Result<SerdeType, E> {
-			Ok(None)
-		}
-		fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<SerdeType, D::Error> {
-			uuid_mod::deserialize(deserializer).map(|v| Some(v))
-		}
-	}
-}
-/// Pass-through mod when [uuid::Uuid] is wrapped in [Vec].
-pub mod uuid_mod_vec {
-	use super::uuid_mod;
-	use uuid::Uuid;
-	use serde::{de::{Error, Visitor}, Deserializer, Serializer};
-	use serde::{
-		de::{DeserializeSeed, SeqAccess, Visitor},
-		ser::SerializeSeq,
-		Deserializer,
-		Serializer
-	};
-
-	type SerdeType = Vec<Uuid>;
-
-	pub fn serialize<S: Serializer>(t: &SerdeType, ser: S) -> Result<S::Ok, S::Error> {
-		let mut seq = ser.serialize_seq(Some(t.len()))?;
-		for v in t.iter() {
-			seq.serialize_element(uuid_mod::serialize(v, ser)?)?;
-		}
-		seq.end()
-	}
-	pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<SerdeType, D::Error> {
-		de.deserialize_seq(UuidVisitor)
-	}
-
-	struct UuidSeed;
-	impl<'de> DeserializeSeed<'de> for UuidSeed {
-		type Value = Uuid;
-
-		fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<Self::Value, D::Error> {
-			uuid_mod::deserialize(de)
-		}
-	}
-
-	struct UuidVisitor;
-	impl<'de> Visitor<'de> for UuidVisitor {
-		type Value = SerdeType;
-
-		fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-			f.write_str("sequence of uuid::Uuid")
-		}
-
-		fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<SerdeType, A::Error> {
-			let mut values = match seq.size_hint() {
-				Some(s) => Vec::with_capacity(s),
-				None => Vec::new(),
-			};
-
-			while let Some(v) = seq.next_element_seed(UuidSeed)? {
-				values.push(v);
-			}
-
-			Ok(values)
-		}
-	}
-}
+// For the Option- and Vec- wrapped variants.
+serde_mod_extras!(uuid_mod, uuid::Uuid);
 "#;
 
 const ENUM_SERDE_MACRO: &str = r#"
