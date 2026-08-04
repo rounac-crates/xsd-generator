@@ -10,5 +10,5 @@ pub fn config_from_file<P: AsRef<Path>>(path: P) -> io::Result<GenConfig> {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct GenConfig {
-	format_uuids_simple: bool,
+	pub simple_uuids: bool,
 }
