@@ -2,6 +2,7 @@
 //!
 
 use super::{Crate, Field, FieldPlurality};
+use crate::config::GenConfig;
 use std::{
 	fmt::Write,
 	path::{Path, PathBuf},
@@ -17,7 +18,7 @@ pub fn has_custom_serde(typename: &str) -> Option<&str> {
 	}
 }
 /// If typename has a serde mod (for `serde(with = "")`), return the mod name.
-pub fn add_custom_serde(field: &mut Field) -> bool {
+pub fn add_custom_serde(config: &GenConfig, field: &mut Field) -> bool {
 	match field.typename.as_str() {
 		"chrono::NaiveTime" => {
 			let base_path = "crate::serde_utils::naive_time".to_string();
@@ -43,7 +44,7 @@ pub fn add_custom_serde(field: &mut Field) -> bool {
 
 			true
 		}
-		/*"uuid::Uuid" => {
+		"uuid::Uuid" if config.simple_uuids => {
 			let base_path = "crate::serde_utils::uuid_mod";
 			let mod_path = match field.plurality {
 				FieldPlurality::None => format_args!("{base_path}"),
@@ -54,12 +55,12 @@ pub fn add_custom_serde(field: &mut Field) -> bool {
 			field.attrs.push(format!("#[serde(with = \"{mod_path}\")]"));
 
 			true
-		}*/
+		}
 		_ => false,
 	}
 }
 
-pub fn add_utils(cr8: &mut Crate) {
+pub fn add_utils(config: &GenConfig, cr8: &mut Crate) {
 	// Add module declaration to root.
 	let lib = cr8.contents.get_mut(Path::new("crate")).unwrap();
 	lib.modules
@@ -81,6 +82,12 @@ pub fn add_utils(cr8: &mut Crate) {
 	m.fns.push(SERDE_MOD_EXTRAS_MACRO.to_owned());
 	m.fns.push(NAIVETIME_MODS.to_owned());
 	m.fns.push(TIMEDELTA_MOD.to_owned());
+
+	// Conditionally insert the simple UUIDs mod stuff.
+	if config.simple_uuids {
+		m.fns.push(UUID_MOD.to_owned());
+	}
+
 	m.fns.push(ENUM_SERDE_MACRO.to_owned());
 }
 

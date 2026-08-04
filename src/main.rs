@@ -61,7 +61,7 @@ fn add_schema(schema: &Element, out_crate: &mut Crate) {
 	}
 }
 
-fn add_choices(elems: &[Element], cr8: &mut Crate) {
+fn add_choices(config: &GenConfig, elems: &[Element], cr8: &mut Crate) {
 	let choices = elems
 		.iter()
 		.filter(|e| e.type_.as_ref().is_some_and(|t| *t == ContentType::Choice));
@@ -132,7 +132,7 @@ fn add_choices(elems: &[Element], cr8: &mut Crate) {
 				rename: None,
 				attrs: Vec::new(),
 			};
-			add_custom_serde(&mut c);
+			add_custom_serde(config, &mut c);
 
 			// Variant name must be pascal.
 			let mut vnt_name = match to_pascal_case(&e.name) {
@@ -287,7 +287,7 @@ fn add_enum_types(elems: &[Element], cr8: &mut Crate) {
 	}
 }
 
-fn add_complex_structs(elems: &[Element], cr8: &mut Crate) {
+fn add_complex_structs(config: &GenConfig, elems: &[Element], cr8: &mut Crate) {
 	let structs = elems
 		.iter()
 		.filter(|e| e.type_.as_ref().is_some_and(|t| *t == ContentType::Complex));
@@ -398,7 +398,7 @@ fn add_complex_structs(elems: &[Element], cr8: &mut Crate) {
 				boxed: false,
 				attrs: field_attrs,
 			};
-			add_custom_serde(&mut f);
+			add_custom_serde(config, &mut f);
 
 			fields.push(f);
 		}
@@ -1009,6 +1009,7 @@ fn main() {
 							return;
 						}
 					}
+					// Output directory
 					"-o" => {
 						if let Some(next_arg) = args.next() {
 							output_dir = PathBuf::from(next_arg);
@@ -1115,9 +1116,9 @@ fn main() {
 
 	add_schema(&schemas[0], &mut cr8);
 	add_schema_elements(&elements, &mut cr8);
-	add_choices(&elements, &mut cr8);
+	add_choices(&gen_config, &elements, &mut cr8);
 	add_enum_types(&elements, &mut cr8);
-	add_complex_structs(&elements, &mut cr8);
+	add_complex_structs(&gen_config, &elements, &mut cr8);
 	add_simple_structs(&elements, &mut cr8);
 
 	// MUST GO BEFORE FLATTEN
@@ -1134,7 +1135,7 @@ fn main() {
 	// names.
 	correct_defaults(&mut cr8);
 
-	contents::serde_utils::add_utils(&mut cr8);
+	contents::serde_utils::add_utils(&gen_config, &mut cr8);
 
 	cr8.update_type_paths();
 
