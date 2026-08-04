@@ -5,7 +5,7 @@ use serde::Deserialize;
 use std::{fs, io, path::Path};
 
 pub fn config_from_file<P: AsRef<Path>>(path: P) -> io::Result<GenConfig> {
-	toml::from_str(&fs::read_to_string(path)?).map_err(|_| io::ErrorKind::Other.into())
+	toml::from_str(&fs::read_to_string(path)?).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
